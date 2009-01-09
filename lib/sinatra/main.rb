@@ -1,7 +1,7 @@
 require 'sinatra/base'
 
 module Sinatra
-  class Default < Base
+  class Default < Stage
     set :app_file, lambda {
       ignore = [
         /lib\/sinatra.*\.rb$/, # all sinatra code

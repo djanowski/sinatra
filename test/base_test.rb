@@ -2,11 +2,11 @@ require 'test/spec'
 require 'sinatra/base'
 require 'sinatra/test'
 
-describe 'Sinatra::Base' do
+describe 'Sinatra::Stage' do
   include Sinatra::Test
 
   it 'includes Rack::Utils' do
-    Sinatra::Base.should.include Rack::Utils
+    Sinatra::Stage.should.include Rack::Utils
   end
 
   it 'can be used as a Rack application' do

@@ -21,7 +21,7 @@ class Rack::File
   end
 end
 
-# Deprecated. Rack::Utils will not extend itself in the future. Sinatra::Base
+# Deprecated. Rack::Utils will not extend itself in the future. Sinatra::Stage
 # includes Rack::Utils, however.
 module Rack::Utils ; extend self ; end
 
@@ -34,7 +34,7 @@ module Sinatra
     def code ; 500 ; end
   end
 
-  class Default < Base
+  class Default < Stage
     # Deprecated.
     FORWARD_METHODS = Sinatra::Delegator::METHODS
 

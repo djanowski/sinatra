@@ -6,7 +6,7 @@ module Sinatra::Test
 
   attr_reader :app, :request, :response
 
-  def mock_app(base=Sinatra::Base, &block)
+  def mock_app(base=Sinatra::Stage, &block)
     @app = Sinatra.new(base, &block)
   end
 

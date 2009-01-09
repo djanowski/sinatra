@@ -6,7 +6,7 @@ describe 'Options' do
   include Sinatra::Test
 
   before do
-    @app = Class.new(Sinatra::Base)
+    @app = Class.new(Sinatra::Stage)
   end
 
   it 'sets options to literal values' do

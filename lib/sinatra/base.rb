@@ -92,7 +92,7 @@ module Sinatra
 
     # Look up a media type by file extension in Rack's mime registry.
     def media_type(type)
-      Base.media_type(type)
+      Stage.media_type(type)
     end
 
     # Set the Content-Type of the response body given a media type or file
@@ -279,7 +279,7 @@ module Sinatra
 
   end
 
-  class Base
+  class Stage
     include Rack::Utils
     include Helpers
     include Templates
@@ -738,7 +738,7 @@ module Sinatra
     end
   end
 
-  class Default < Base
+  class Default < Stage
     set :raise_errors, false
     set :sessions, false
     set :logging, true
@@ -789,7 +789,7 @@ module Sinatra
     end
   end
 
-  def self.new(base=Base, options={}, &block)
+  def self.new(base=Stage, options={}, &block)
     base = Class.new(base)
     base.send :class_eval, &block if block_given?
     base
