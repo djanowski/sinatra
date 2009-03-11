@@ -243,6 +243,9 @@ module Sinatra
 
   private
     def render(engine, template, options={}) #:nodoc:
+      @renderdepth ||= 0
+      options[:layout] = (@renderdepth == 0) if options[:layout].nil?
+      @renderdepth += 1
       data   = lookup_template(engine, template, options)
       output = __send__("render_#{engine}", template, data, options)
       layout, data = lookup_layout(engine, options)
@@ -251,6 +254,8 @@ module Sinatra
       else
         output
       end
+    ensure
+      @renderdepth -= 1
     end
 
     def lookup_template(engine, template, options={})
