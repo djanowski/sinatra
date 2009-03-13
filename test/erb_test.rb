@@ -78,4 +78,19 @@ describe "ERB Templates" do
     assert ok?
     assert_equal '<outer><inner>hi</inner></outer>', body
   end
+
+  it "defaults to no layout on nested render" do
+    mock_app {
+      template(:inner) { "<inner><%= 'hi' %></inner>" }
+      template(:outer) { "<outer><%= erb :inner %></outer>" }
+      template(:layout) { "<html><%= yield %></html>" }
+      get '/' do
+        erb :outer
+      end
+    }
+
+    get '/'
+    assert ok?
+    assert_equal '<html><outer><inner>hi</inner></outer></html>', body
+  end
 end

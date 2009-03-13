@@ -65,4 +65,33 @@ describe "HAML Templates" do
     assert ok?
     assert_equal "<!DOCTYPE html>\n<h1>Hello World</h1>\n", body
   end
+
+  it "can be used in a nested fashion for partials and whatnot" do
+    mock_app {
+      template(:inner) { "%inner hi" }
+      template(:outer) { "%outer= haml(:inner)" }
+      get '/' do
+        haml :outer
+      end
+    }
+
+    get '/'
+    assert ok?
+    assert_equal "<outer><inner>hi</inner></outer>\n", body
+  end
+
+  it "defaults to no layout on nested render" do
+    mock_app {
+      template(:inner) { "%inner hi" }
+      template(:outer) { "%outer= haml(:inner)" }
+      template(:layout) { "%html= yield" }
+      get '/' do
+        haml :outer
+      end
+    }
+
+    get '/'
+    assert ok?
+    assert_equal "<html><outer><inner>hi</inner></outer></html>\n", body
+  end
 end
