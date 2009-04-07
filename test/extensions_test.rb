@@ -1,6 +1,6 @@
 require File.dirname(__FILE__) + '/helper'
 
-describe 'Registering extensions' do
+class ExtensionsTest < Test::Unit::TestCase
   module FooExtensions
     def foo
     end
@@ -23,6 +23,12 @@ describe 'Registering extensions' do
   module QuuxExtensions
     def quux
     end
+  end
+
+  module PainExtensions
+    def foo=(name); end
+    def bar?(name); end
+    def fizz!(name); end
   end
 
   it 'will add the methods to the DSL for the class in which you register them and its subclasses' do
@@ -48,6 +54,16 @@ describe 'Registering extensions' do
       map { |m| m.to_sym }.include?(:foo)
     assert !Sinatra::Delegator.private_instance_methods.
       map { |m| m.to_sym }.include?(:im_hiding_in_ur_foos)
+  end
+
+  it 'will handle special method names' do
+    Sinatra::Default.register PainExtensions
+    assert Sinatra::Delegator.private_instance_methods.
+      map { |m| m.to_sym }.include?(:foo=)
+    assert Sinatra::Delegator.private_instance_methods.
+      map { |m| m.to_sym }.include?(:bar?)
+    assert Sinatra::Delegator.private_instance_methods.
+      map { |m| m.to_sym }.include?(:fizz!)
   end
 
   it 'will not delegate methods on Base#register' do

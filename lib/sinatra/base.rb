@@ -3,6 +3,7 @@ require 'time'
 require 'uri'
 require 'rack'
 require 'rack/builder'
+require 'sinatra/showexceptions'
 
 module Sinatra
   VERSION = '0.9.1.1'
@@ -14,6 +15,7 @@ module Sinatra
       @env['HTTP_USER_AGENT']
     end
 
+    # Returns an array of acceptable media types for the response
     def accept
       @env['HTTP_ACCEPT'].to_s.split(',').map { |a| a.strip }
     end
@@ -162,6 +164,8 @@ module Sinatra
       not_found
     end
 
+    # Rack response body used to deliver static files. The file contents are
+    # generated iteratively in 8K chunks.
     class StaticFile < ::File #:nodoc:
       alias_method :to_path, :path
       def each
@@ -215,30 +219,40 @@ module Sinatra
   end
 
   # Template rendering methods. Each method takes a the name of a template
-  # to render as a Symbol and returns a String with the rendered output.
+  # to render as a Symbol and returns a String with the rendered output,
+  # as well as an optional hash with additional options.
+  #
+  # `template` is either the name or path of the template as symbol
+  # (Use `:'subdir/myview'` for views in subdirectories), or a string
+  # that will be rendered.
+  #
+  # Possible options are:
+  #   :layout       If set to false, no layout is rendered, otherwise
+  #                 the specified layout is used (Ignored for `sass`)
+  #   :locals       A hash with local variables that should be available
+  #                 in the template
   module Templates
-    def erb(template, options={})
+    def erb(template, options={}, locals={})
       require 'erb' unless defined? ::ERB
-      render :erb, template, options
+      render :erb, template, options, locals
     end
 
-    def haml(template, options={})
-      require 'haml' unless defined? ::Haml
-      options[:options] ||= self.class.haml if self.class.respond_to? :haml
-      render :haml, template, options
+    def haml(template, options={}, locals={})
+      require 'haml' unless defined? ::Haml::Engine
+      render :haml, template, options, locals
     end
 
-    def sass(template, options={}, &block)
-      require 'sass' unless defined? ::Sass
+    def sass(template, options={}, locals={})
+      require 'sass' unless defined? ::Sass::Engine
       options[:layout] = false
-      render :sass, template, options
+      render :sass, template, options, locals
     end
 
-    def builder(template=nil, options={}, &block)
+    def builder(template=nil, options={}, locals={}, &block)
       require 'builder' unless defined? ::Builder
       options, template = template, nil if template.is_a?(Hash)
       template = lambda { block } if template.nil?
-      render :builder, template, options
+      render :builder, template, options, locals
     end
 
   private
@@ -258,13 +272,14 @@ module Sinatra
       @renderdepth -= 1
     end
 
-    def lookup_template(engine, template, options={})
+    def lookup_template(engine, template, views_dir)
       case template
       when Symbol
         if cached = self.class.templates[template]
-          lookup_template(engine, cached, options)
+          lookup_template(engine, cached, views_dir)
         else
-          ::File.read(template_path(engine, template, options))
+          path = ::File.join(views_dir, "#{template}.#{engine}")
+          ::File.read(path)
         end
       when Proc
         template.call
@@ -275,28 +290,17 @@ module Sinatra
       end
     end
 
-    def lookup_layout(engine, options)
-      return if options[:layout] == false
-      options.delete(:layout) if options[:layout] == true
-      template = options[:layout] || :layout
-      data     = lookup_template(engine, template, options)
-      [template, data]
+    def lookup_layout(engine, template, views_dir)
+      lookup_template(engine, template, views_dir)
     rescue Errno::ENOENT
       nil
     end
 
-    def template_path(engine, template, options={})
-      views_dir =
-        options[:views_directory] || self.options.views || "./views"
-      "#{views_dir}/#{template}.#{engine}"
-    end
-
-    def render_erb(template, data, options, &block)
+    def render_erb(template, data, options, locals, &block)
       original_out_buf = @_out_buf
       data = data.call if data.kind_of? Proc
 
       instance = ::ERB.new(data, nil, nil, '@_out_buf')
-      locals = options[:locals] || {}
       locals_assigns = locals.to_a.collect { |k,v| "#{k} = locals[:#{k}]" }
 
       src = "#{locals_assigns.join("\n")}\n#{instance.src}"
@@ -305,18 +309,17 @@ module Sinatra
       result
     end
 
-    def render_haml(template, data, options, &block)
-      engine = ::Haml::Engine.new(data, options[:options] || {})
-      engine.render(self, options[:locals] || {}, &block)
+    def render_haml(template, data, options, locals, &block)
+      ::Haml::Engine.new(data, options).render(self, locals, &block)
     end
 
-    def render_sass(template, data, options, &block)
-      engine = ::Sass::Engine.new(data, options[:sass] || {})
-      engine.render
+    def render_sass(template, data, options, locals, &block)
+      ::Sass::Engine.new(data, options).render
     end
 
-    def render_builder(template, data, options, &block)
-      xml = ::Builder::XmlMarkup.new(:indent => 2)
+    def render_builder(template, data, options, locals, &block)
+      options = { :indent => 2 }.merge(options)
+      xml = ::Builder::XmlMarkup.new(options)
       if data.respond_to?(:to_str)
         eval data.to_str, binding, '<BUILDER>', 1
       elsif data.kind_of?(Proc)
@@ -373,13 +376,16 @@ module Sinatra
       self.class
     end
 
-    # Exit the current block and halt the response.
+    # Exit the current block, halts any further processing
+    # of the request, and returns the specified response.
     def halt(*response)
       response = response.first if response.length == 1
       throw :halt, response
     end
 
     # Pass control to the next matching route.
+    # If there are no more matching routes, Sinatra will
+    # return a 404 response.
     def pass
       throw :pass
     end
@@ -431,14 +437,26 @@ module Sinatra
             catch(:pass) do
               conditions.each { |cond|
                 throw :pass if instance_eval(&cond) == false }
-              throw :halt, instance_eval(&block)
+              route_eval(&block)
             end
           end
         end
       end
 
-      # No matching route found or all routes passed -- forward downstream
-      # when running as middleware; 404 when running as normal app.
+      route_missing
+    end
+
+    # Run a route block and throw :halt with the result.
+    def route_eval(&block)
+      throw :halt, instance_eval(&block)
+    end
+
+    # No matching route was found or all routes passed. The default
+    # implementation is to forward the request downstream when running
+    # as middleware (@app is non-nil); when no downstream app is set, raise
+    # a NotFound exception. Subclasses can override this method to perform
+    # custom route miss logic.
+    def route_missing
       if @app
         forward
       else
@@ -517,7 +535,7 @@ module Sinatra
       @env['sinatra.error'] = boom
 
       dump_errors!(boom) if options.dump_errors?
-      raise boom         if options.raise_errors?
+      raise boom         if options.raise_errors? || options.show_exceptions?
 
       @response.status = 500
       error_block! boom.class, Exception
@@ -564,6 +582,8 @@ module Sinatra
       attr_accessor :routes, :filters, :conditions, :templates,
         :middleware, :errors
 
+      # Sets an option to the given value.  If the value is a proc,
+      # the proc will be called every time the option is accessed.
       def set(option, value=self)
         if value.kind_of?(Proc)
           metadef(option, &value)
@@ -579,14 +599,19 @@ module Sinatra
         self
       end
 
+      # Same as calling `set :option, true` for each of the given options.
       def enable(*opts)
         opts.each { |key| set(key, true) }
       end
 
+      # Same as calling `set :option, false` for each of the given options.
       def disable(*opts)
         opts.each { |key| set(key, false) }
       end
 
+      # Define a custom error handler. Optionally takes either an Exception
+      # class, or an HTTP status code to specify which errors should be
+      # handled.
       def error(codes=Exception, &block)
         if codes.respond_to? :each
           codes.each { |err| error(err, &block) }
@@ -595,18 +620,23 @@ module Sinatra
         end
       end
 
+      # Sugar for `error(404) { ... }`
       def not_found(&block)
         error 404, &block
       end
 
+      # Define a named template. The block must return the template source.
       def template(name, &block)
         templates[name] = block
       end
 
+      # Define the layout template. The block must return the template source.
       def layout(name=:layout, &block)
         template name, &block
       end
 
+      # Load embeded templates from the file; uses the caller's __FILE__
+      # when no file is specified.
       def use_in_file_templates!(file=nil)
         file ||= caller_files.first
         if data = ::IO.read(file).split('__END__')[1]
@@ -629,10 +659,15 @@ module Sinatra
         Rack::Mime.mime_type(type, nil)
       end
 
+      # Define a before filter. Filters are run before all requests
+      # within the same context as route handlers and may access/modify the
+      # request and response.
       def before(&block)
         @filters << block
       end
 
+      # Add a route condition. The route is considered non-matching when the
+      # block returns false.
       def condition(&block)
         @conditions << block
       end
@@ -669,6 +704,8 @@ module Sinatra
       end
 
     public
+      # Defining a `GET` handler also automatically defines
+      # a `HEAD` handler.
       def get(path, opts={}, &block)
         conditions = @conditions.dup
         route('GET', path, opts, &block)
@@ -736,6 +773,8 @@ module Sinatra
       end
 
     public
+      # Makes the methods defined in the block and in the Modules given
+      # in `extensions` available to the handlers and templates
       def helpers(*extensions, &block)
         class_eval(&block)  if block_given?
         include *extensions if extensions.any?
@@ -758,16 +797,20 @@ module Sinatra
       def test? ; environment == :test ; end
       def production? ; environment == :production ; end
 
+      # Set configuration options for Sinatra and/or the app.
+      # Allows scoping of settings for certain environments.
       def configure(*envs, &block)
-        return if reloading?
         yield if envs.empty? || envs.include?(environment.to_sym)
       end
 
+      # Use the specified Rack middleware
       def use(middleware, *args, &block)
         @prototype = nil
         @middleware << [middleware, args, block]
       end
 
+      # Run the Sinatra app as a self-hosted server using
+      # Thin, Mongrel or WEBrick (in that order)
       def run!(options={})
         set options
         handler      = detect_rack_handler
@@ -796,30 +839,17 @@ module Sinatra
       def new(*args, &bk)
         builder = Rack::Builder.new
         builder.use Rack::Session::Cookie if sessions? && !test?
-        builder.use Rack::CommonLogger if logging?
-        builder.use Rack::MethodOverride if methodoverride?
-        @middleware.each { |c, args, bk| builder.use(c, *args, &bk) }
+        builder.use Rack::CommonLogger    if logging?
+        builder.use Rack::MethodOverride  if methodoverride?
+        builder.use ShowExceptions        if show_exceptions?
+
+        @middleware.each { |c,a,b| builder.use(c, *a, &b) }
         builder.run super
         builder.to_app
       end
 
       def call(env)
-        synchronize do
-          reload! if reload?
-          prototype.call(env)
-        end
-      end
-
-      def reloading?
-        @reloading
-      end
-
-      def reload!
-        @reloading = true
-        reset!
-        $LOADED_FEATURES.delete("sinatra.rb")
-        ::Kernel.load app_file
-        @reloading = false
+        synchronize { prototype.call(env) }
       end
 
       def reset!(base=superclass)
@@ -891,6 +921,7 @@ module Sinatra
     set :raise_errors, true
     set :dump_errors, false
     set :clean_trace, true
+    set :show_exceptions, Proc.new { development? }
     set :sessions, false
     set :logging, false
     set :methodoverride, false
@@ -906,8 +937,7 @@ module Sinatra
     set :root, Proc.new { app_file && File.expand_path(File.dirname(app_file)) }
     set :views, Proc.new { root && File.join(root, 'views') }
     set :public, Proc.new { root && File.join(root, 'public') }
-    set :reload, Proc.new { app_file? && app_file !~ /\.ru$/i && development? }
-    set :lock, Proc.new { reload? }
+    set :lock, false
 
     # static files route
     get(/.*[^\/]$/) do
@@ -954,35 +984,6 @@ module Sinatra
         </html>
         HTML
       end
-
-      error do
-        next unless err = request.env['sinatra.error']
-        heading = err.class.name + ' - ' + err.message.to_s
-        (<<-HTML).gsub(/^ {8}/, '')
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style type="text/css">
-            body {font-family:verdana;color:#333}
-            #c {margin-left:20px}
-            h1 {color:#1D6B8D;margin:0;margin-top:-30px}
-            h2 {color:#1D6B8D;font-size:18px}
-            pre {border-left:2px solid #ddd;padding-left:10px;color:#000}
-            img {margin-top:10px}
-          </style>
-        </head>
-        <body>
-          <div id="c">
-            <img src="/__sinatra__/500.png">
-            <h1>#{escape_html(heading)}</h1>
-            <pre>#{escape_html(clean_backtrace(err.backtrace) * "\n")}</pre>
-            <h2>Params</h2>
-            <pre>#{escape_html(params.inspect)}</pre>
-          </div>
-        </body>
-        </html>
-        HTML
-      end
     end
   end
 
@@ -1008,14 +1009,17 @@ module Sinatra
   class Application < Default
   end
 
+  # Sinatra delegation mixin. Mixing this module into an object causes all
+  # methods to be delegated to the Sinatra::Application class. Used primarily
+  # at the top-level.
   module Delegator #:nodoc:
     def self.delegate(*methods)
       methods.each do |method_name|
         eval <<-RUBY, binding, '(__DELEGATE__)', 1
           def #{method_name}(*args, &b)
-            ::Sinatra::Application.#{method_name}(*args, &b)
+            ::Sinatra::Application.send(#{method_name.inspect}, *args, &b)
           end
-          private :#{method_name}
+          private #{method_name.inspect}
         RUBY
       end
     end
@@ -1026,6 +1030,8 @@ module Sinatra
              :production?, :use_in_file_templates!, :helpers
   end
 
+  # Create a new Sinatra application. The block is evaluated in the new app's
+  # class scope.
   def self.new(base=Base, options={}, &block)
     base = Class.new(base)
     base.send :class_eval, &block if block_given?

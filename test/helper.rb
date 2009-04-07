@@ -5,10 +5,13 @@ rescue LoadError
   require 'rack'
 end
 
+testdir = File.dirname(__FILE__)
+$LOAD_PATH.unshift testdir unless $LOAD_PATH.include?(testdir)
+
 libdir = File.dirname(File.dirname(__FILE__)) + '/lib'
 $LOAD_PATH.unshift libdir unless $LOAD_PATH.include?(libdir)
 
-require 'test/unit'
+require 'contest'
 require 'sinatra/test'
 
 class Sinatra::Base
@@ -16,8 +19,14 @@ class Sinatra::Base
   include Test::Unit::Assertions
 end
 
+Sinatra::Base.set :environment, :test
+
 class Test::Unit::TestCase
   include Sinatra::Test
+
+  class << self
+    alias_method :it, :test
+  end
 
   # Sets up a Sinatra::Base subclass defined with the block
   # given. Used in setup or individual spec methods to establish
@@ -25,51 +34,6 @@ class Test::Unit::TestCase
   def mock_app(base=Sinatra::Base, &block)
     @app = Sinatra.new(base, &block)
   end
-
-  def restore_default_options
-    Sinatra::Default.set(
-      :environment => :development,
-      :raise_errors => Proc.new { test? },
-      :dump_errors => true,
-      :sessions => false,
-      :logging => Proc.new { ! test? },
-      :methodoverride => true,
-      :static => true,
-      :run => Proc.new { ! test? }
-    )
-  end
-end
-
-##
-# test/spec/mini
-# http://pastie.caboo.se/158871
-# chris@ozmm.org
-#
-def describe(*args, &block)
-  return super unless (name = args.first.capitalize) && block
-  name = "#{name.gsub(/\W/, '')}Test"
-  Object.send :const_set, name, Class.new(Test::Unit::TestCase)
-  klass = Object.const_get(name)
-  klass.class_eval do
-    def self.it(name, &block)
-      define_method("test_#{name.gsub(/\W/,'_').downcase}", &block)
-    end
-    def self.xspecify(*args) end
-    def self.before(&block) define_method(:setup, &block)    end
-    def self.after(&block)  define_method(:teardown, &block) end
-  end
-  klass.class_eval &block
-  klass
-end
-
-def describe_option(name, &block)
-  klass = describe("Option #{name}", &block)
-  klass.before do
-    restore_default_options
-    @base    = Sinatra.new
-    @default = Class.new(Sinatra::Default)
-  end
-  klass
 end
 
 # Do not output warnings for the duration of the block.

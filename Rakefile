@@ -2,7 +2,7 @@ require 'rake/clean'
 require 'rake/testtask'
 require 'fileutils'
 
-task :default => [:test]
+task :default => [:test, :compat]
 task :spec => :test
 
 # SPECS ===============================================================
@@ -12,10 +12,14 @@ Rake::TestTask.new(:test) do |t|
   t.ruby_opts = ['-rubygems'] if defined? Gem
 end
 
-desc 'Run compatibility specs (requires test/spec)'
+desc 'Run compatibility specs (requires test-spec)'
 task :compat do |t|
-  pattern = ENV['TEST'] || '.*'
-  sh "specrb --testcase '#{pattern}' -Ilib:test compat/*_test.rb"
+  if ENV['PATH'].split(':').any? { |p| File.exist?("#{p}/specrb") }
+    pattern = ENV['TEST'] || '.*'
+    sh "specrb --testcase '#{pattern}' -Ilib:test compat/*_test.rb"
+  else
+    puts "WARN: skipping compat tests. test-spec and mocha gems required."
+  end
 end
 
 # PACKAGING ============================================================
@@ -33,7 +37,7 @@ def spec
 end
 
 def package(ext='')
-  "dist/sinatra-#{spec.version}" + ext
+  "pkg/sinatra-#{spec.version}" + ext
 end
 
 desc 'Build packages'
@@ -44,15 +48,15 @@ task :install => package('.gem') do
   sh "gem install #{package('.gem')}"
 end
 
-directory 'dist/'
-CLOBBER.include('dist')
+directory 'pkg/'
+CLOBBER.include('pkg')
 
-file package('.gem') => %w[dist/ sinatra.gemspec] + spec.files do |f|
+file package('.gem') => %w[pkg/ sinatra.gemspec] + spec.files do |f|
   sh "gem build sinatra.gemspec"
   mv File.basename(f.name), f.name
 end
 
-file package('.tar.gz') => %w[dist/] + spec.files do |f|
+file package('.tar.gz') => %w[pkg/] + spec.files do |f|
   sh <<-SH
     git archive \
       --prefix=sinatra-#{source_version}/ \
@@ -64,7 +68,7 @@ end
 # Rubyforge Release / Publish Tasks ==================================
 
 desc 'Publish gem and tarball to rubyforge'
-task 'publish:gem' => [package('.gem'), package('.tar.gz')] do |t|
+task 'release' => [package('.gem'), package('.tar.gz')] do |t|
   sh <<-end
     rubyforge add_release sinatra sinatra #{spec.version} #{package('.gem')} &&
     rubyforge add_file    sinatra sinatra #{spec.version} #{package('.tar.gz')}
@@ -95,12 +99,6 @@ file 'doc/api/index.html' => FileList['lib/**/*.rb','README.rdoc'] do |f|
 end
 CLEAN.include 'doc/api'
 
-def rdoc_to_html(file_name)
-  require 'rdoc/markup/to_html'
-  rdoc = RDoc::Markup::ToHtml.new
-  rdoc.convert(File.read(file_name))
-end
-
 # Gemspec Helpers ====================================================
 
 def source_version
@@ -108,12 +106,7 @@ def source_version
   line.match(/.*VERSION = '(.*)'/)[1]
 end
 
-project_files =
-  FileList[
-    '{lib,test,compat,images}/**',
-    'Rakefile', 'CHANGES', 'README.rdoc'
-  ]
-file 'sinatra.gemspec' => project_files do |f|
+task 'sinatra.gemspec' => FileList['{lib,test,compat}/**','Rakefile','CHANGES','*.rdoc'] do |f|
   # read spec file and split out manifest section
   spec = File.read(f.name)
   head, manifest, tail = spec.split("  # = MANIFEST =\n")

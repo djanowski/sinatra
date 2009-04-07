@@ -1,6 +1,6 @@
 require File.dirname(__FILE__) + '/helper'
 
-describe "HAML Templates" do
+class HAMLTest < Test::Unit::TestCase
   def haml_app(&block)
     mock_app {
       set :views, File.dirname(__FILE__) + '/views'
@@ -47,9 +47,12 @@ describe "HAML Templates" do
   end
 
   it "passes HAML options to the Haml engine" do
-    haml_app {
-      haml "!!!\n%h1 Hello World", :options => {:format => :html5}
+    mock_app {
+      get '/' do
+        haml "!!!\n%h1 Hello World", :format => :html5
+      end
     }
+    get '/'
     assert ok?
     assert_equal "<!DOCTYPE html>\n<h1>Hello World</h1>\n", body
   end

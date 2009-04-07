@@ -1,37 +1,39 @@
 require File.dirname(__FILE__) + '/helper'
 
-describe 'Options' do
-  before do
-    restore_default_options
-    @app = Sinatra.new
+class OptionsTest < Test::Unit::TestCase
+  setup do
+    @base    = Sinatra.new(Sinatra::Base)
+    @default = Sinatra.new(Sinatra::Default)
+    @base.set    :environment, :development
+    @default.set :environment, :development
   end
 
   it 'sets options to literal values' do
-    @app.set(:foo, 'bar')
-    assert @app.respond_to?(:foo)
-    assert_equal 'bar', @app.foo
+    @base.set(:foo, 'bar')
+    assert @base.respond_to?(:foo)
+    assert_equal 'bar', @base.foo
   end
 
   it 'sets options to Procs' do
-    @app.set(:foo, Proc.new { 'baz' })
-    assert @app.respond_to?(:foo)
-    assert_equal 'baz', @app.foo
+    @base.set(:foo, Proc.new { 'baz' })
+    assert @base.respond_to?(:foo)
+    assert_equal 'baz', @base.foo
   end
 
   it "sets multiple options with a Hash" do
-    @app.set :foo => 1234,
+    @base.set :foo => 1234,
         :bar => 'Hello World',
         :baz => Proc.new { 'bizzle' }
-    assert_equal 1234, @app.foo
-    assert_equal 'Hello World', @app.bar
-    assert_equal 'bizzle', @app.baz
+    assert_equal 1234, @base.foo
+    assert_equal 'Hello World', @base.bar
+    assert_equal 'bizzle', @base.baz
   end
 
   it 'inherits option methods when subclassed' do
-    @app.set :foo, 'bar'
-    @app.set :biz, Proc.new { 'baz' }
+    @base.set :foo, 'bar'
+    @base.set :biz, Proc.new { 'baz' }
 
-    sub = Class.new(@app)
+    sub = Class.new(@base)
     assert sub.respond_to?(:foo)
     assert_equal 'bar', sub.foo
     assert sub.respond_to?(:biz)
@@ -39,31 +41,31 @@ describe 'Options' do
   end
 
   it 'overrides options in subclass' do
-    @app.set :foo, 'bar'
-    @app.set :biz, Proc.new { 'baz' }
-    sub = Class.new(@app)
+    @base.set :foo, 'bar'
+    @base.set :biz, Proc.new { 'baz' }
+    sub = Class.new(@base)
     sub.set :foo, 'bling'
     assert_equal 'bling', sub.foo
-    assert_equal 'bar', @app.foo
+    assert_equal 'bar', @base.foo
   end
 
   it 'creates setter methods when first defined' do
-    @app.set :foo, 'bar'
-    assert @app.respond_to?('foo=')
-    @app.foo = 'biz'
-    assert_equal 'biz', @app.foo
+    @base.set :foo, 'bar'
+    assert @base.respond_to?('foo=')
+    @base.foo = 'biz'
+    assert_equal 'biz', @base.foo
   end
 
   it 'creates predicate methods when first defined' do
-    @app.set :foo, 'hello world'
-    assert @app.respond_to?(:foo?)
-    assert @app.foo?
-    @app.set :foo, nil
-    assert !@app.foo?
+    @base.set :foo, 'hello world'
+    assert @base.respond_to?(:foo?)
+    assert @base.foo?
+    @base.set :foo, nil
+    assert !@base.foo?
   end
 
   it 'uses existing setter methods if detected' do
-    class << @app
+    class << @base
       def foo
         @foo
       end
@@ -72,303 +74,294 @@ describe 'Options' do
       end
     end
 
-    @app.set :foo, 'bam'
-    assert_equal 'oops', @app.foo
+    @base.set :foo, 'bam'
+    assert_equal 'oops', @base.foo
   end
 
   it "sets multiple options to true with #enable" do
-    @app.enable :sessions, :foo, :bar
-    assert @app.sessions
-    assert @app.foo
-    assert @app.bar
+    @base.enable :sessions, :foo, :bar
+    assert @base.sessions
+    assert @base.foo
+    assert @base.bar
   end
 
   it "sets multiple options to false with #disable" do
-    @app.disable :sessions, :foo, :bar
-    assert !@app.sessions
-    assert !@app.foo
-    assert !@app.bar
+    @base.disable :sessions, :foo, :bar
+    assert !@base.sessions
+    assert !@base.foo
+    assert !@base.bar
   end
 
   it 'enables MethodOverride middleware when :methodoverride is enabled' do
-    @app.set :methodoverride, true
-    @app.put('/') { 'okay' }
+    @base.set :methodoverride, true
+    @base.put('/') { 'okay' }
+    @app = @base
     post '/', {'_method'=>'PUT'}, {}
     assert_equal 200, status
     assert_equal 'okay', body
   end
-end
 
-describe_option 'clean_trace' do
-  def clean_backtrace(trace)
-    @base.new.send(:clean_backtrace, trace)
-  end
+  describe 'clean_trace' do
+    def clean_backtrace(trace)
+      Sinatra::Base.new.send(:clean_backtrace, trace)
+    end
 
-  it 'is enabled on Base' do
-    assert @base.clean_trace?
-  end
+    it 'is enabled on Base' do
+      assert @base.clean_trace?
+    end
 
-  it 'is enabled on Default' do
-    assert @default.clean_trace?
-  end
+    it 'is enabled on Default' do
+      assert @default.clean_trace?
+    end
 
-  it 'does nothing when disabled' do
-    backtrace = [
-      "./lib/sinatra/base.rb",
-      "./myapp:42",
-      ("#{Gem.dir}/some/lib.rb" if defined?(Gem))
-    ].compact
-    @base.set :clean_trace, false
-    assert_equal backtrace, clean_backtrace(backtrace)
-  end
+    it 'does nothing when disabled' do
+      backtrace = [
+        "./lib/sinatra/base.rb",
+        "./myapp:42",
+        ("#{Gem.dir}/some/lib.rb" if defined?(Gem))
+      ].compact
 
-  it 'removes sinatra lib paths from backtrace when enabled' do
-    backtrace = [
-      "./lib/sinatra/base.rb",
-      "./lib/sinatra/compat.rb:42",
-      "./lib/sinatra/main.rb:55 in `foo'"
-    ]
-    assert clean_backtrace(backtrace).empty?
-  end
+      klass = Class.new(Sinatra::Base)
+      klass.disable :clean_trace
 
-  it 'removes ./ prefix from backtrace paths when enabled' do
-    assert_equal ['myapp.rb:42'], clean_backtrace(['./myapp.rb:42'])
-  end
+      assert_equal backtrace, klass.new.send(:clean_backtrace, backtrace)
+    end
 
-  if defined?(Gem)
-    it 'removes gem lib paths from backtrace when enabled' do
-      assert clean_backtrace(["#{Gem.dir}/some/lib"]).empty?
+    it 'removes sinatra lib paths from backtrace when enabled' do
+      backtrace = [
+        "./lib/sinatra/base.rb",
+        "./lib/sinatra/compat.rb:42",
+        "./lib/sinatra/main.rb:55 in `foo'"
+      ]
+      assert clean_backtrace(backtrace).empty?
+    end
+
+    it 'removes ./ prefix from backtrace paths when enabled' do
+      assert_equal ['myapp.rb:42'], clean_backtrace(['./myapp.rb:42'])
+    end
+
+    if defined?(Gem)
+      it 'removes gem lib paths from backtrace when enabled' do
+        assert clean_backtrace(["#{Gem.dir}/some/lib"]).empty?
+      end
     end
   end
-end
 
-describe_option 'run' do
-  it 'is disabled on Base' do
-    assert ! @base.run?
+  describe 'run' do
+    it 'is disabled on Base' do
+      assert ! @base.run?
+    end
+
+    it 'is enabled on Default when not in test environment' do
+      @default.set :environment, :development
+      assert @default.development?
+      assert @default.run?
+
+      @default.set :environment, :development
+      assert @default.run?
+    end
+
+    # TODO: it 'is enabled when $0 == app_file'
   end
 
-  it 'is enabled on Default when not in test environment' do
-    assert @default.development?
-    assert @default.run?
+  describe 'raise_errors' do
+    it 'is enabled on Base' do
+      assert @base.raise_errors?
+    end
 
-    @default.set :environment, :development
-    assert @default.run?
+    it 'is enabled on Default only in test' do
+      @default.set(:environment, :development)
+      assert @default.development?
+      assert ! @default.raise_errors?
+
+      @default.set(:environment, :production)
+      assert ! @default.raise_errors?
+
+      @default.set(:environment, :test)
+      assert @default.raise_errors?
+    end
   end
 
-  # TODO: it 'is enabled when $0 == app_file'
-end
+  describe 'show_exceptions' do
+    it 'is enabled on Default only in development' do
+      @base.set(:environment, :development)
+      assert @base.show_exceptions?
 
-describe_option 'raise_errors' do
-  it 'is enabled on Base' do
-    assert @base.raise_errors?
+      assert @default.development?
+      assert @default.show_exceptions?
+
+      @default.set(:environment, :test)
+      assert ! @default.show_exceptions?
+
+      @base.set(:environment, :production)
+      assert ! @base.show_exceptions?
+    end
+
+    it 'returns a friendly 500' do
+      klass = Sinatra.new(Sinatra::Default)
+      mock_app(klass) {
+        enable :show_exceptions
+
+        get '/' do
+          raise StandardError
+        end
+      }
+
+      get '/'
+      assert_equal 500, status
+      assert body.include?("StandardError")
+      assert body.include?("<code>show_exceptions</code> option")
+    end
   end
 
-  it 'is enabled on Default only in test' do
-    @default.set(:environment, :development)
-    assert @default.development?
-    assert ! @default.raise_errors?, "disabled development"
+  describe 'dump_errors' do
+    it 'is disabled on Base' do
+      assert ! @base.dump_errors?
+    end
 
-    @default.set(:environment, :production)
-    assert ! @default.raise_errors?
+    it 'is enabled on Default' do
+      assert @default.dump_errors?
+    end
 
-    @default.set(:environment, :test)
-    assert @default.raise_errors?
-  end
-end
+    it 'dumps exception with backtrace to rack.errors' do
+      klass = Sinatra.new(Sinatra::Default)
 
-describe_option 'dump_errors' do
-  it 'is disabled on Base' do
-    assert ! @base.dump_errors?
-  end
+      mock_app(klass) {
+        disable :raise_errors
 
-  it 'is enabled on Default' do
-    assert @default.dump_errors?
-  end
+        error do
+          error = @env['rack.errors'].instance_variable_get(:@error)
+          error.rewind
 
-  it 'dumps exception with backtrace to rack.errors' do
-    Sinatra::Default.disable(:raise_errors)
+          error.read
+        end
 
-    mock_app(Sinatra::Default) {
-      error do
-        error = @env['rack.errors'].instance_variable_get(:@error)
-        error.rewind
+        get '/' do
+          raise
+        end
+      }
 
-        error.read
-      end
-
-      get '/' do
-        raise
-      end
-    }
-
-    get '/'
-    assert body.include?("RuntimeError") && body.include?("options_test.rb")
-  end
-end
-
-describe_option 'sessions' do
-  it 'is disabled on Base' do
-    assert ! @base.sessions?
+      get '/'
+      assert body.include?("RuntimeError") && body.include?("options_test.rb")
+    end
   end
 
-  it 'is disabled on Default' do
-    assert ! @default.sessions?
+  describe 'sessions' do
+    it 'is disabled on Base' do
+      assert ! @base.sessions?
+    end
+
+    it 'is disabled on Default' do
+      assert ! @default.sessions?
+    end
+
+    # TODO: it 'uses Rack::Session::Cookie when enabled' do
   end
 
-  # TODO: it 'uses Rack::Session::Cookie when enabled' do
-end
+  describe 'logging' do
+    it 'is disabled on Base' do
+      assert ! @base.logging?
+    end
 
-describe_option 'logging' do
-  it 'is disabled on Base' do
-    assert ! @base.logging?
+    it 'is enabled on Default when not in test environment' do
+      assert @default.logging?
+
+      @default.set :environment, :test
+      assert ! @default.logging
+    end
+
+    # TODO: it 'uses Rack::CommonLogger when enabled' do
   end
 
-  it 'is enabled on Default when not in test environment' do
-    assert @default.logging?
+  describe 'static' do
+    it 'is disabled on Base' do
+      assert ! @base.static?
+    end
 
-    @default.set :environment, :test
-    assert ! @default.logging
+    it 'is enabled on Default' do
+      assert @default.static?
+    end
+
+    # TODO: it setup static routes if public is enabled
+    # TODO: however, that's already tested in static_test so...
   end
 
-  # TODO: it 'uses Rack::CommonLogger when enabled' do
-end
-
-describe_option 'static' do
-  it 'is disabled on Base' do
-    assert ! @base.static?
+  describe 'host' do
+    it 'defaults to 0.0.0.0' do
+      assert_equal '0.0.0.0', @base.host
+      assert_equal '0.0.0.0', @default.host
+    end
   end
 
-  it 'is enabled on Default' do
-    assert @default.static?
+  describe 'port' do
+    it 'defaults to 4567' do
+      assert_equal 4567, @base.port
+      assert_equal 4567, @default.port
+    end
   end
 
-  # TODO: it setup static routes if public is enabled
-  # TODO: however, that's already tested in static_test so...
-end
-
-describe_option 'host' do
-  it 'defaults to 0.0.0.0' do
-    assert_equal '0.0.0.0', @base.host
-    assert_equal '0.0.0.0', @default.host
-  end
-end
-
-describe_option 'port' do
-  it 'defaults to 4567' do
-    assert_equal 4567, @base.port
-    assert_equal 4567, @default.port
-  end
-end
-
-describe_option 'server' do
-  it 'is one of thin, mongrel, webrick' do
-    assert_equal %w[thin mongrel webrick], @base.server
-    assert_equal %w[thin mongrel webrick], @default.server
-  end
-end
-
-describe_option 'app_file' do
-  it 'is nil' do
-    assert @base.app_file.nil?
-    assert @default.app_file.nil?
-  end
-end
-
-describe_option 'root' do
-  it 'is nil if app_file is not set' do
-    assert @base.root.nil?
-    assert @default.root.nil?
+  describe 'server' do
+    it 'is one of thin, mongrel, webrick' do
+      assert_equal %w[thin mongrel webrick], @base.server
+      assert_equal %w[thin mongrel webrick], @default.server
+    end
   end
 
-  it 'is equal to the expanded basename of app_file' do
-    @base.app_file = __FILE__
-    assert_equal File.expand_path(File.dirname(__FILE__)), @base.root
-
-    @default.app_file = __FILE__
-    assert_equal File.expand_path(File.dirname(__FILE__)), @default.root
-  end
-end
-
-describe_option 'views' do
-  it 'is nil if root is not set' do
-    assert @base.views.nil?
-    assert @default.views.nil?
+  describe 'app_file' do
+    it 'is nil' do
+      assert @base.app_file.nil?
+      assert @default.app_file.nil?
+    end
   end
 
-  it 'is set to root joined with views/' do
-    @base.root = File.dirname(__FILE__)
-    assert_equal File.dirname(__FILE__) + "/views", @base.views
+  describe 'root' do
+    it 'is nil if app_file is not set' do
+      assert @base.root.nil?
+      assert @default.root.nil?
+    end
 
-    @default.root = File.dirname(__FILE__)
-    assert_equal File.dirname(__FILE__) + "/views", @default.views
-  end
-end
+    it 'is equal to the expanded basename of app_file' do
+      @base.app_file = __FILE__
+      assert_equal File.expand_path(File.dirname(__FILE__)), @base.root
 
-describe_option 'public' do
-  it 'is nil if root is not set' do
-    assert @base.public.nil?
-    assert @default.public.nil?
-  end
-
-  it 'is set to root joined with public/' do
-    @base.root = File.dirname(__FILE__)
-    assert_equal File.dirname(__FILE__) + "/public", @base.public
-
-    @default.root = File.dirname(__FILE__)
-    assert_equal File.dirname(__FILE__) + "/public", @default.public
-  end
-end
-
-describe_option 'reload' do
-  it 'is enabled when
-        app_file is set,
-        is not a rackup file,
-        and we are in development' do
-    @base.app_file = __FILE__
-    @base.set(:environment, :development)
-    assert @base.reload?
-
-    @default.app_file = __FILE__
-    @default.set(:environment, :development)
-    assert @default.reload?
+      @default.app_file = __FILE__
+      assert_equal File.expand_path(File.dirname(__FILE__)), @default.root
+    end
   end
 
-  it 'is disabled if app_file is not set' do
-    assert ! @base.reload?
-    assert ! @default.reload?
+  describe 'views' do
+    it 'is nil if root is not set' do
+      assert @base.views.nil?
+      assert @default.views.nil?
+    end
+
+    it 'is set to root joined with views/' do
+      @base.root = File.dirname(__FILE__)
+      assert_equal File.dirname(__FILE__) + "/views", @base.views
+
+      @default.root = File.dirname(__FILE__)
+      assert_equal File.dirname(__FILE__) + "/views", @default.views
+    end
   end
 
-  it 'is disabled if app_file is a rackup file' do
-    @base.app_file = 'config.ru'
-    assert ! @base.reload?
+  describe 'public' do
+    it 'is nil if root is not set' do
+      assert @base.public.nil?
+      assert @default.public.nil?
+    end
 
-    @default.app_file = 'config.ru'
-    assert ! @base.reload?
+    it 'is set to root joined with public/' do
+      @base.root = File.dirname(__FILE__)
+      assert_equal File.dirname(__FILE__) + "/public", @base.public
+
+      @default.root = File.dirname(__FILE__)
+      assert_equal File.dirname(__FILE__) + "/public", @default.public
+    end
   end
 
-  it 'is disabled if we are not in development' do
-    @base.set(:environment, :foo)
-    assert ! @base.reload
-
-    @default.set(:environment, :bar)
-    assert ! @default.reload
-  end
-end
-
-describe_option 'lock' do
-  it 'is enabled when reload is enabled' do
-    @base.enable(:reload)
-    assert @base.lock?
-
-    @default.enable(:reload)
-    assert @default.lock?
-  end
-
-  it 'is disabled when reload is disabled' do
-    @base.disable(:reload)
-    assert ! @base.lock?
-
-    @default.disable(:reload)
-    assert ! @default.lock?
+  describe 'lock' do
+    it 'is disabled by default' do
+      assert ! @base.lock?
+    end
   end
 end
