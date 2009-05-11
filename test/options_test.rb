@@ -255,7 +255,20 @@ class OptionsTest < Test::Unit::TestCase
       assert ! @default.sessions?
     end
 
-    # TODO: it 'uses Rack::Session::Cookie when enabled' do
+    it 'uses Rack::Session::Cookie when enabled' do
+      klass = Sinatra.new(Sinatra::Default)
+
+      mock_app(klass) {
+        enable :sessions
+
+        get '/' do
+          session[:foo] = "bar"
+        end
+      }
+
+      get '/'
+      assert @response.headers["Set-Cookie"]
+    end
   end
 
   describe 'logging' do
