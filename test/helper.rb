@@ -1,3 +1,5 @@
+ENV['RACK_ENV'] = 'test'
+
 begin
   require 'rack'
 rescue LoadError
@@ -13,6 +15,10 @@ $LOAD_PATH.unshift libdir unless $LOAD_PATH.include?(libdir)
 
 require 'contest'
 require 'sinatra/test'
+
+require 'haml'
+require 'sass'
+require 'builder'
 
 class Sinatra::Base
   # Allow assertions in request context

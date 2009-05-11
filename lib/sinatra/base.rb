@@ -6,7 +6,7 @@ require 'rack/builder'
 require 'sinatra/showexceptions'
 
 module Sinatra
-  VERSION = '0.9.1.1'
+  VERSION = '0.9.1.3'
 
   # The request object. See Rack::Request for more info:
   # http://rack.rubyforge.org/doc/classes/Rack/Request.html
@@ -33,16 +33,6 @@ module Sinatra
   # http://rack.rubyforge.org/doc/classes/Rack/Response.html
   # http://rack.rubyforge.org/doc/classes/Rack/Response/Helpers.html
   class Response < Rack::Response
-    def initialize
-      @status, @body = 200, []
-      @header = Rack::Utils::HeaderHash.new({'Content-Type' => 'text/html'})
-    end
-
-    def write(str)
-      @body << str.to_s
-      str
-    end
-
     def finish
       @body = block if block_given?
       if [204, 304].include?(status.to_i)
@@ -233,58 +223,65 @@ module Sinatra
   #                 in the template
   module Templates
     def erb(template, options={}, locals={})
-      require 'erb' unless defined? ::ERB
       render :erb, template, options, locals
     end
 
     def haml(template, options={}, locals={})
-      require 'haml' unless defined? ::Haml::Engine
       render :haml, template, options, locals
     end
 
     def sass(template, options={}, locals={})
-      require 'sass' unless defined? ::Sass::Engine
       options[:layout] = false
       render :sass, template, options, locals
     end
 
     def builder(template=nil, options={}, locals={}, &block)
-      require 'builder' unless defined? ::Builder
       options, template = template, nil if template.is_a?(Hash)
       template = lambda { block } if template.nil?
       render :builder, template, options, locals
     end
 
   private
-    def render(engine, template, options={}) #:nodoc:
-      @renderdepth ||= 0
-      options[:layout] = (@renderdepth == 0) if options[:layout].nil?
-      @renderdepth += 1
-      data   = lookup_template(engine, template, options)
-      output = __send__("render_#{engine}", template, data, options)
-      layout, data = lookup_layout(engine, options)
+    def render(engine, template, options={}, locals={})
+      # merge app-level options
+      options = self.class.send(engine).merge(options) if self.class.respond_to?(engine)
+
+      # extract generic options
+      layout = options.delete(:layout)
+      layout = :layout if layout.nil? || layout == true
+      views = options.delete(:views) || self.class.views || "./views"
+      locals = options.delete(:locals) || locals || {}
+
+      # render template
+      data, options[:filename], options[:line] = lookup_template(engine, template, views)
+      output = __send__("render_#{engine}", template, data, options, locals)
+
+      # render layout
       if layout
-        __send__("render_#{engine}", layout, data, options) { output }
-      else
-        output
+        data, options[:filename], options[:line] = lookup_layout(engine, layout, views)
+        if data
+          output = __send__("render_#{engine}", layout, data, options, {}) { output }
+        end
       end
-    ensure
-      @renderdepth -= 1
+
+      output
     end
 
-    def lookup_template(engine, template, views_dir)
+    def lookup_template(engine, template, views_dir, filename = nil, line = nil)
       case template
       when Symbol
         if cached = self.class.templates[template]
-          lookup_template(engine, cached, views_dir)
+          lookup_template(engine, cached[:template], views_dir, cached[:filename], cached[:line])
         else
           path = ::File.join(views_dir, "#{template}.#{engine}")
-          ::File.read(path)
+          [ ::File.read(path), path, 1 ]
         end
       when Proc
-        template.call
+        filename, line = self.class.caller_locations.first if filename.nil?
+        [ template.call, filename, line.to_i ]
       when String
-        template
+        filename, line = self.class.caller_locations.first if filename.nil?
+        [ template, filename, line.to_i ]
       else
         raise ArgumentError
       end
@@ -303,8 +300,13 @@ module Sinatra
       instance = ::ERB.new(data, nil, nil, '@_out_buf')
       locals_assigns = locals.to_a.collect { |k,v| "#{k} = locals[:#{k}]" }
 
-      src = "#{locals_assigns.join("\n")}\n#{instance.src}"
-      eval src, binding, '(__ERB__)', locals_assigns.length + 1
+      filename = options.delete(:filename) || '(__ERB__)'
+      line = options.delete(:line) || 1
+      line -= 1 if instance.src =~ /^#coding:/
+
+      render_binding = binding
+      eval locals_assigns.join("\n"), render_binding
+      eval instance.src, render_binding, filename, line
       @_out_buf, result = original_out_buf, @_out_buf
       result
     end
@@ -319,9 +321,11 @@ module Sinatra
 
     def render_builder(template, data, options, locals, &block)
       options = { :indent => 2 }.merge(options)
+      filename = options.delete(:filename) || '<BUILDER>'
+      line = options.delete(:line) || 1
       xml = ::Builder::XmlMarkup.new(options)
       if data.respond_to?(:to_str)
-        eval data.to_str, binding, '<BUILDER>', 1
+        eval data.to_str, binding, filename, line
       elsif data.kind_of?(Proc)
         data.call(xml)
       end
@@ -403,7 +407,13 @@ module Sinatra
   private
     # Run before filters and then locate and run a matching route.
     def route!
-      @params = nested_params(@request.params)
+      # enable nested params in Rack < 1.0; allow indifferent access
+      @params =
+        if Rack::Utils.respond_to?(:parse_nested_query)
+          indifferent_params(@request.params)
+        else
+          nested_params(@request.params)
+        end
 
       # before filters
       self.class.filters.each { |block| instance_eval(&block) }
@@ -464,6 +474,18 @@ module Sinatra
       end
     end
 
+    # Enable string or symbol key access to the nested params hash.
+    def indifferent_params(params)
+      params = indifferent_hash.merge(params)
+      params.each do |key, value|
+        next unless value.is_a?(Hash)
+        params[key] = indifferent_params(value)
+      end
+    end
+
+    # Recursively replace the params hash with a nested indifferent
+    # hash. Rack 1.0 has a built in implementation of this method - remove
+    # this once Rack 1.0 is required.
     def nested_params(params)
       return indifferent_hash.merge(params) if !params.keys.join.include?('[')
       params.inject indifferent_hash do |res, (key,val)|
@@ -627,7 +649,8 @@ module Sinatra
 
       # Define a named template. The block must return the template source.
       def template(name, &block)
-        templates[name] = block
+        filename, line = caller_locations.first
+        templates[name] = { :filename => filename, :line => line, :template => block }
       end
 
       # Define the layout template. The block must return the template source.
@@ -639,12 +662,18 @@ module Sinatra
       # when no file is specified.
       def use_in_file_templates!(file=nil)
         file ||= caller_files.first
-        if data = ::IO.read(file).split('__END__')[1]
+        app, data =
+          ::IO.read(file).split(/^__END__$/, 2) rescue nil
+
+        if data
           data.gsub!(/\r\n/, "\n")
+          lines = app.count("\n") + 1
           template = nil
           data.each_line do |line|
+            lines += 1
             if line =~ /^@@\s*(.*)/
-              template = templates[$1.to_sym] = ''
+              template = ''
+              templates[$1.to_sym] = { :filename => file, :line => lines, :template => template }
             elsif template
               template << line
             end
@@ -714,10 +743,10 @@ module Sinatra
         route('HEAD', path, opts, &block)
       end
 
-      def put(path, opts={}, &bk); route 'PUT', path, opts, &bk; end
-      def post(path, opts={}, &bk); route 'POST', path, opts, &bk; end
-      def delete(path, opts={}, &bk); route 'DELETE', path, opts, &bk; end
-      def head(path, opts={}, &bk); route 'HEAD', path, opts, &bk; end
+      def put(path, opts={}, &bk);    route 'PUT',    path, opts, &bk end
+      def post(path, opts={}, &bk);   route 'POST',   path, opts, &bk end
+      def delete(path, opts={}, &bk); route 'DELETE', path, opts, &bk end
+      def head(path, opts={}, &bk);   route 'HEAD',   path, opts, &bk end
 
     private
       def route(verb, path, opts={}, &block)
@@ -737,7 +766,7 @@ module Sinatra
             lambda { unbound_method.bind(self).call }
           end
 
-        invoke_hook(:route_added, verb, path)
+        invoke_hook(:route_added, verb, path, block)
 
         (routes[verb] ||= []).
           push([pattern, keys, conditions, block]).last
@@ -793,14 +822,14 @@ module Sinatra
         end
       end
 
-      def development? ; environment == :development ; end
-      def test? ; environment == :test ; end
-      def production? ; environment == :production ; end
+      def development?; environment == :development end
+      def production?;  environment == :production  end
+      def test?;        environment == :test        end
 
       # Set configuration options for Sinatra and/or the app.
       # Allows scoping of settings for certain environments.
       def configure(*envs, &block)
-        yield if envs.empty? || envs.include?(environment.to_sym)
+        yield self if envs.empty? || envs.include?(environment.to_sym)
       end
 
       # Use the specified Rack middleware
@@ -876,7 +905,7 @@ module Sinatra
         servers = Array(self.server)
         servers.each do |server_name|
           begin
-            return Rack::Handler.get(server_name)
+            return Rack::Handler.get(server_name.capitalize)
           rescue LoadError
           rescue NameError
           end
@@ -903,18 +932,28 @@ module Sinatra
           send :define_method, message, &block
       end
 
+    public
+      CALLERS_TO_IGNORE = [
+        /lib\/sinatra.*\.rb$/, # all sinatra code
+        /\(.*\)/,              # generated code
+        /custom_require\.rb$/, # rubygems require hacks
+        /active_support/,      # active_support require hacks
+      ] unless self.const_defined?('CALLERS_TO_IGNORE')
+
+      # add rubinius (and hopefully other VM impls) ignore patterns ...
+      CALLERS_TO_IGNORE.concat(RUBY_IGNORE_CALLERS) if defined?(RUBY_IGNORE_CALLERS)
+
       # Like Kernel#caller but excluding certain magic entries and without
       # line / method information; the resulting array contains filenames only.
       def caller_files
-        ignore = [
-          /lib\/sinatra.*\.rb$/, # all sinatra code
-          /\(.*\)/,              # generated code
-          /custom_require\.rb$/, # rubygems require hacks
-          /active_support/,      # active_support require hacks
-        ]
+        caller_locations.
+          map { |file,line| file }
+      end
+
+      def caller_locations
         caller(1).
-          map    { |line| line.split(/:\d/, 2).first }.
-          reject { |file| ignore.any? { |pattern| file =~ pattern } }
+          map    { |line| line.split(/:(?=\d|in )/)[0,2] }.
+          reject { |file,line| CALLERS_TO_IGNORE.any? { |pattern| file =~ pattern } }
       end
     end
 
@@ -963,6 +1002,8 @@ module Sinatra
       end
 
       error NotFound do
+        content_type 'text/html'
+
         (<<-HTML).gsub(/^ {8}/, '')
         <!DOCTYPE html>
         <html>

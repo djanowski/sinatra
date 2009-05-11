@@ -7,18 +7,27 @@ task :spec => :test
 
 # SPECS ===============================================================
 
+task(:test) { puts "==> Running main test suite" }
+
 Rake::TestTask.new(:test) do |t|
   t.test_files = FileList['test/*_test.rb']
   t.ruby_opts = ['-rubygems'] if defined? Gem
 end
 
-desc 'Run compatibility specs (requires test-spec)'
-task :compat do |t|
-  if ENV['PATH'].split(':').any? { |p| File.exist?("#{p}/specrb") }
-    pattern = ENV['TEST'] || '.*'
-    sh "specrb --testcase '#{pattern}' -Ilib:test compat/*_test.rb"
-  else
-    puts "WARN: skipping compat tests. test-spec and mocha gems required."
+desc "Run < 0.9.x compatibility specs"
+task :compat do
+  begin
+    require 'mocha'
+    require 'test/spec'
+    at_exit { exit 0 } # disable test-spec at_exit runner
+
+    puts "==> Running compat test suite"
+    Rake::TestTask.new(:compat) do |t|
+      t.test_files = FileList['compat/*_test.rb']
+      t.ruby_opts = ['-rubygems'] if defined? Gem
+    end
+  rescue LoadError
+    warn 'Skipping compat tests. mocha and/or test-spec gems not installed.'
   end
 end
 
