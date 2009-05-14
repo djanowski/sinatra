@@ -93,10 +93,13 @@ class TestTest < Test::Unit::TestCase
     assert_equal '1.2.3.4', request['HTTP_HOST']
 
     get '/', :env => { :session => {'foo' => 'bar'} }
-    assert_equal({'foo' => 'bar'}, request['rack.session'])
+    assert_equal "rack.session=#{[Marshal.dump('foo' => 'bar')].pack("m*")}", request['HTTP_COOKIE']
 
     get '/', :env => { :cookies => 'foo' }
     assert_equal 'foo', request['HTTP_COOKIE']
+
+    get '/', :env => { :cookies => 'bar', :session => 'foo' }
+    assert_equal "rack.session=#{[Marshal.dump('foo')].pack("m*")}; bar", request['HTTP_COOKIE']
 
     get '/', :env => { :content_type => 'text/plain' }
     assert_equal 'text/plain', request['CONTENT_TYPE']
@@ -104,6 +107,8 @@ class TestTest < Test::Unit::TestCase
 
   it 'allow to test session easily' do
     app = mock_app(Sinatra::Default) {
+      enable :sessions
+
       get '/' do
         session['foo'] = 'bar'
         200

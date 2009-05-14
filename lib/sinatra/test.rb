@@ -76,12 +76,15 @@ for more information.
       :accept       => 'HTTP_ACCEPT',
       :agent        => 'HTTP_USER_AGENT',
       :host         => 'HTTP_HOST',
-      :session      => 'rack.session',
+      :session      => 'HTTP_COOKIE',
       :cookies      => 'HTTP_COOKIE',
       :content_type => 'CONTENT_TYPE'
     }
 
     def rack_options(opts)
+      opts[:session] = "#{escape('rack.session')}=#{[Marshal.dump(opts[:session])].pack("m*")}" if opts[:session]
+      opts[:cookies] = "#{opts.delete(:session)}; #{opts[:cookies]}" if opts[:cookies] && opts[:session]
+
       opts.merge(:lint => true).inject({}) do |hash,(key,val)|
         key = RACK_OPTIONS[key] || key
         hash[key] = val
